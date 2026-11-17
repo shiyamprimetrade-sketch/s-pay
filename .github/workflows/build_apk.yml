@@ -1,0 +1,50 @@
+name: Build S-Pay APK
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  android:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git zip unzip openjdk-17-jdk python3-pip python3-venv autoconf automake libtool pkg-config build-essential cmake libffi-dev libssl-dev zlib1g-dev
+      - name: Install Buildozer
+        run: |
+          python3 -m pip install --user buildozer==1.6.0 cython==0.29.34
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Test data layer
+        run: |
+          python3 -m unittest discover -s tests -v
+          python3 -m py_compile main.py database.py
+      - name: Pin Android wheel-aware python-for-android
+        run: |
+          git clone --quiet https://github.com/kivy/python-for-android.git .p4a-source
+          git -C .p4a-source checkout --detach 9562d1b4f306d0af1e76991c711114010dea4152
+          python3 - <<'PY'
+          from pathlib import Path
+          import os
+          source = Path('.p4a-source/pythonforandroid/build.py').read_text()
+          assert '*platforms, *indices, _env=env' in source
+          spec = Path('buildozer.spec')
+          spec.write_text(spec.read_text().replace('[buildozer]', 'p4a.source_dir = '+os.path.abspath('.p4a-source')+'\n[buildozer]'))
+          PY
+      - name: Build APK with Java 17
+        env:
+          JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
+        run: |
+          "$JAVA_HOME/bin/java" -version
+          "$JAVA_HOME/bin/java" -version 2>&1 | grep -q 'version "17'
+          export PATH="$JAVA_HOME/bin:$HOME/.local/bin:$PATH"
+          buildozer -v android debug
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: S-Pay-Android
+          path: bin/*.apk
+          if-no-files-found: error
